@@ -26,6 +26,7 @@ os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.5")
 os.environ.setdefault("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.4")   # нижний порог не выше верхнего
 
 import torch  # noqa: E402
+import random  # noqa: E402
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedule_with_warmup
 
@@ -111,7 +112,12 @@ def main() -> None:
 
     device = resolve_device(params["model"]["device"])
     dtype = resolve_dtype(params["model"]["dtype"])
+    random.seed(tcfg["seed"])
+    torch.manual_seed(tcfg["seed"])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(tcfg["seed"])
 
+  
     train_blob = load_split(params["data"]["train"])
     val_blob = load_split(params["data"]["val"])
     if args.val_limit:
@@ -131,6 +137,11 @@ def main() -> None:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     model.train()
+
+    random.seed(tcfg["seed"])
+    torch.manual_seed(tcfg["seed"])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(tcfg["seed"])
 
     examples = train_blob["examples"]
     micro_per_epoch = math.ceil(len(examples) / tcfg["batch_size"])
@@ -197,6 +208,7 @@ def main() -> None:
     out_root = Path(args.out) if args.out else Path(params["paths"]["models"])
     adapter_dir = out_root / f"adapter_{args.variant}"
     model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
 
     tokens = sum(len(e["input_ids"]) for e in examples) * tcfg["epochs"]
     metrics = {

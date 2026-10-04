@@ -20,7 +20,7 @@ compare:
 	uv run python -m src.compare --variant all_layers
 
 check:
-	bash tests/check.sh
+	PYTHONIOENCODING=utf-8 PYTHONUTF8=1 LC_ALL=C.UTF-8 LANG=C.UTF-8 bash tests/check.sh
 
 # clean — артефакты обучения (адаптеры, метрики, графики); всё пересоздаётся make train.
 # distclean — ещё и .venv (~0,8 ГБ): когда ДЗ сдано и место нужнее.
