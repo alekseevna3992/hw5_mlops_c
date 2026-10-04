@@ -54,11 +54,13 @@ def inputs_fingerprint(params: dict) -> str:
 
 def lora_config(params: dict, n_layers: int, freeze_first: int) -> LoraConfig:
     cfg = params["lora"]
+    layers = list(range(freeze_first, n_layers)) if freeze_first > 0 else None
     return LoraConfig(
         r=cfg["r"],
         lora_alpha=cfg["alpha"],
         lora_dropout=cfg["dropout"],
         target_modules=cfg["target_modules"],
+        layers_to_transform=layers,
         modules_to_save=cfg.get("modules_to_save"),
         task_type="CAUSAL_LM",
     )
@@ -146,12 +148,15 @@ def main() -> None:
     )
 
     eval_bs = tcfg.get("eval_batch_size", tcfg["batch_size"])
-    base_val = None   # TODO: с чем сравнивать дообученную модель?
-    curve_train: list[list[float]] = []
     curve_val: list[list[float]] = []
+    base_val = evaluate(model.get_base_model(), val_blob["examples"], pad_id, device, eval_bs)
+    curve_val.append([0, round(base_val, 4)])
+    curve_train: list[list[float]] = []
     print(f"[{args.variant}] устройство {device}, обучаемых {trainable:,} из {total:,} "
           f"({trainable / total:.3%}); шагов {total_steps}")
 
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     peak = allocated_bytes(device)
     started = time.perf_counter()
     step, micro, accum_loss, diverged = 0, 0, 0.0, False
@@ -178,7 +183,11 @@ def main() -> None:
                 break
             accum_loss = 0.0
             if step % tcfg["eval_every"] == 0 or step == total_steps:
-                print(f"  шаг {step}/{total_steps}: train {curve_train[-1][1]:.4f}")
+                t0 = time.perf_counter()
+                v = evaluate(model, val_blob["examples"], pad_id, device, eval_bs)
+                eval_seconds += time.perf_counter() - t0
+                curve_val.append([step, round(v, 4)])
+                print(f"  шаг {step}/{total_steps}: train {curve_train[-1][1]:.4f} val {v:.4f}")
             if step >= total_steps:
                 break
         if diverged or step >= total_steps:
@@ -214,7 +223,7 @@ def main() -> None:
         "train_tokens_per_sec": round(tokens * min(1.0, step / max(total_steps, 1)) / seconds, 1) if seconds else 0,
         "peak_memory_mb": round(peak / 1048576, 1),
         "memory_metric": memory_metric(device),
-        "adapter_dir": str(adapter_dir),
+        "adapter_dir": str(adapter_dir).replace("\\", "/"),
         "adapter_size_mb": dir_size_mb(adapter_dir),
         "inputs_fingerprint": inputs_fingerprint(params),
     }
